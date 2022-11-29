@@ -1,18 +1,18 @@
 from pydub import AudioSegment
 from pyannote.audio import Pipeline
-from datetime import datetime
-import re
+import os
 import whisper
+import json
 # Token: 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
 
 
 #Fuck all this Indian-written shit I stole
-# def prep_file():
-#     spacermilli = 2000
-#     spacer = AudioSegment.silent(duration=spacermilli)
-#     audio = AudioSegment.from_mp3("input.mp3") 
-#     audio = spacer.append(audio, crossfade=0)
-#     audio.export('input_prep.wav', format='wav')
+def prep_file():
+    spacermilli = 2000
+    spacer = AudioSegment.silent(duration=spacermilli)
+    audio = AudioSegment.from_mp3("input.mp3") 
+    audio = spacer.append(audio, crossfade=0)
+    audio.export('input_prep.wav', format='wav')
 
 # def generate_diarization():  
 #     pipeline = Pipeline.from_pretrained('pyannote/speaker-diarization', use_auth_token='')
@@ -69,17 +69,45 @@ import whisper
 # dzs = group_diarization()
 # save_groups(dzs)
 
-def mute_filter(start, stop):
-    return "volume=enable='between(t,{},{})':volume=0".format(start, stop)
+# I have the start/ends of when speaker is speaking, ffmpeg needs when they aren't speaking. There's an easier way somehow
+def generate_mute_filters(dzs, speaker): 
+    dzs = [i for i in dzs if i[0] == speaker]
+    filters = ['between(t\,{}\,{})'.format(0,dzs[0][1])]
+    for i in range(len(dzs)-1):
+        start = dzs[i][2]
+        stop = dzs[i+1][1]
+        filters.append('between(t\,{}\,{})'.format(start, stop))
+    filters.append('between(t\,{}\,{})'.format(dzs[-1][2], 99999)) # :)
+    return filters
+
+def generate_file(input_file, dzs, speaker):
+    mute_filters = '+'.join(generate_mute_filters(dzs, speaker))
+    input_prefix = input_file.rstrip('.wav')
+    filtered_filename = f'{input_prefix}_{speaker}.wav'
+    ffmpeg_cmd = f'ffmpeg -y -i {input_file} -af volume=0:enable=\'{mute_filters}\' {filtered_filename}'
+    os.system(ffmpeg_cmd)
+    return filtered_filename
+
+def transcribe(filename):
+    model = whisper.load_model('medium.en')
+    result = model.transcribe(filename)
+    print(result)
+
 
 def main():
+    input_file = 'trim.wav'
+    print('loading pipeline')
     pipeline = Pipeline.from_pretrained('pyannote/speaker-diarization', use_auth_token='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')
-    model = whisper.load_model('tiny.en')
-    diarization = pipeline('input_prep.wav')
+    print('diarizing')
+    diarization = pipeline(input_file)
     dzs = [(i[2], i[0].start, i[0].end) for i in diarization.itertracks(yield_label=True)]
     speakers = set([i[0] for i in dzs])
-    x = sorted(dzs, key=lambda dz: dz[1])
-    print(speakers)
-    
+    dzs = sorted(dzs, key=lambda dz: dz[1])
+    for speaker in speakers:
+        print(f'filtering {speaker}')
+        filtered_audio = generate_file(input_file, dzs, speaker)
+        print(f'transcribing {filtered_audio}')
+        transcribe(filtered_audio)
+   
 if __name__ == '__main__':
     main()
