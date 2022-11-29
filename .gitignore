@@ -1,3 +1,5 @@
 *.wav
 *.mp3
 diarization.txt
+filter.txt
+*.json
